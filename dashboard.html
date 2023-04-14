@@ -1,0 +1,11 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<h3>engeloggt als : {{user}}</h3>
+<a href="{{url_for('logout')}}">Logout</a>
+
+<p>{{get_flashed_messages()[0]}}</p>
+
+
+{% endblock content %}
+
