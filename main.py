@@ -1,90 +1,72 @@
-from flask_bootstrap import Bootstrap5
-from flask import Flask, render_template, request, redirect, url_for, flash
-from flask_wtf import FlaskForm
-from wtforms import StringField, PasswordField, BooleanField, SubmitField
-from wtforms.validators import DataRequired, Length
-from flask_sqlalchemy import SQLAlchemy
-from flask_login import LoginManager, login_required, UserMixin, login_user, logout_user, current_user
-from bcrypt import hashpw, checkpw, gensalt
+import os
+from wtforms.validators import DataRequired, Length, EqualTo
 
-db = SQLAlchemy()
-app = Flask(__name__, template_folder="templates")
-bootstrap = Bootstrap5(app)
-app.config['SECRET_KEY'] = "myKey"
-app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///project.db"
-db.init_app(app)
-login_manager = LoginManager()
-login_manager.init_app(app)
-login_manager.login_view = "login"
+app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "nur-fuer-lokal-aendern")
+
 
 def get_hashed_pw(plain_password):
-    return hashpw(plain_password.encode('utf-8'), gensalt())
+    return hashpw(plain_password.encode("utf-8"), gensalt()).decode("utf-8")
+
 
 def check_password(plain_password, hashed_password):
-    return checkpw(plain_password.encode('utf-8'), hashed_password)
+    return checkpw(plain_password.encode("utf-8"), hashed_password.encode("utf-8"))
+
 
 @login_manager.user_loader
 def load_user(user_id):
-    return User.query.get(int(user_id))
+    return db.session.get(User, int(user_id))
 
-class User(db.Model, UserMixin):
-    __tablename__ = "users"
-    id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String, unique=True, nullable=False)
-    password = db.Column(db.String, nullable=False)
 
 class RegisterForm(FlaskForm):
-    username = StringField("username", validators=[DataRequired(), Length(4, 10)])
-    password = PasswordField("password", validators=[DataRequired(), Length(8, 30)])
-    password_repeat = PasswordField("wiederhole dein passsword", validators=[DataRequired(), Length(8, 30)])
-    submit = SubmitField()
+    username = StringField("Benutzername", validators=[DataRequired(), Length(4, 10)])
+    password = PasswordField("Passwort", validators=[DataRequired(), Length(8, 30)])
+    password_repeat = PasswordField(
+        "Passwort wiederholen",
+        validators=[DataRequired(), EqualTo("password", message="Passwörter stimmen nicht überein")],
+    )
+    submit = SubmitField("Registrieren")
 
-class LoginForm(FlaskForm):
-    username = StringField("username", validators=[DataRequired(), Length(4, 10)])
-    password = PasswordField("password", validators=[DataRequired(), Length(8, 30)])
-    remember = BooleanField("remember me?")
-    submit = SubmitField()
 
-with app.app_context():
-    db.create_all()
-@app.route('/')
+@app.route("/")
 def index():
-    if current_user.is_active:
+    if current_user.is_authenticated:
         return render_template("index.html", user=current_user.username)
-    return render_template('index.html')
-@app.route("/Login", methods=["GET", "POST"])
+    return render_template("index.html")
+
+
+@app.route("/login", methods=["GET", "POST"])
 def login():
     form = LoginForm()
     if form.validate_on_submit():
         user = User.query.filter_by(username=form.username.data).first()
-        print(user.password)
         if user and check_password(form.password.data, user.password):
             login_user(user, remember=form.remember.data)
-            flash("du wurdest erfolgreich eingeloggt ")
+            flash("Du wurdest erfolgreich eingeloggt.")
             return redirect(url_for("dashboard"))
-        return render_template("login.html", form=form, error="Wrong Username or Password")
+        return render_template("login.html", form=form, error="Falscher Benutzername oder Passwort")
     return render_template("login.html", form=form)
-@app.route("/Register",  methods=['GET', 'POST'])
+
+
+@app.route("/register", methods=["GET", "POST"])
 def register():
     form = RegisterForm()
     if form.validate_on_submit():
-        hashed_password = get_hashed_pw(form.password.data)
-        new_user = User(username=form.username.data, password=hashed_password)
+        if User.query.filter_by(username=form.username.data).first():
+            form.username.errors.append("Dieser Benutzername ist schon vergeben.")
+            return render_template("register.html", form=form)
+        new_user = User(username=form.username.data, password=get_hashed_pw(form.password.data))
         db.session.add(new_user)
         db.session.commit()
-        return  redirect(url_for("index"))
-    return render_template('register.html', form=form)
-@app.route("/Dashboard")
+        flash("Registrierung erfolgreich, du kannst dich jetzt einloggen.")
+        return redirect(url_for("login"))
+    return render_template("register.html", form=form)
+
+
+@app.route("/dashboard")
+@login_required
 def dashboard():
     return render_template("dashboard.html", user=current_user.username)
 
-@app.route("/Logout")
-@login_required
-def logout():
-    logout_user()
-    return redirect(url_for("index"))
 
-if __name__ == '__main__':
-    app.run(debug=True, port=1414)
-
-"hallo wie gehts"
+if __name__ == "__main__":
+    app.run(debug=os.environ.get("FLASK_DEBUG") == "1", port=1414)
